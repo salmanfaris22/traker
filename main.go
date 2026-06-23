@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,12 +10,15 @@ import (
 	"time"
 )
 
-const PORT = ":8080"
+const (
+	TCP_PORT  = ":8080"
+	HTTP_PORT = ":8090"
+)
 
 // -------- DATA STORE ----------
 type Attendance struct {
-	Data string
-	Time string
+	Data string `json:"data"`
+	Time string `json:"time"`
 }
 
 var (
@@ -39,12 +43,10 @@ func saveLog(data string) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	log := Attendance{
+	logStore = append(logStore, Attendance{
 		Data: data,
 		Time: time.Now().Format("2006-01-02 15:04:05"),
-	}
-
-	logStore = append(logStore, log)
+	})
 }
 
 // -------- TCP HANDLER ----------
@@ -68,37 +70,29 @@ func handleConnection(conn net.Conn) {
 			fmt.Println("🔥 RAW PACKET RECEIVED:")
 			fmt.Println(rawData)
 
-			// store logs
 			saveLog(rawData)
 			logToFile(rawData)
-
-			// TODO: parse eSSL format here
 		}
 	}
 }
 
-// -------- API HANDLER ----------
+// -------- API: ATTENDANCE ----------
 func getAttendance(w http.ResponseWriter, r *http.Request) {
-
 	mu.Lock()
 	defer mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(logStore)
+}
 
-	fmt.Fprintf(w, "[")
+// -------- API: HEALTH ----------
+func healthCheck(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 
-	for i, log := range logStore {
-		fmt.Fprintf(w,
-			`{"time":"%s","data":"%s"}`,
-			log.Time, log.Data,
-		)
-
-		if i < len(logStore)-1 {
-			fmt.Fprintf(w, ",")
-		}
-	}
-
-	fmt.Fprintf(w, "]")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status":"ok","time":"%s"}`,
+		time.Now().Format("2006-01-02 15:04:05"),
+	)
 }
 
 // -------- MAIN ----------
@@ -106,32 +100,31 @@ func main() {
 
 	// TCP SERVER
 	go func() {
-		listener, err := net.Listen("tcp", PORT)
+		listener, err := net.Listen("tcp", TCP_PORT)
 		if err != nil {
 			fmt.Println("TCP start error:", err)
 			return
 		}
 
-		fmt.Println("🚀 TCP Server running on port", PORT)
+		fmt.Println("🚀 TCP Server running on", TCP_PORT)
 
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
 				continue
 			}
-
 			go handleConnection(conn)
 		}
 	}()
 
-	// HTTP API SERVER (same port 8080 NOT possible → use 8090 API OR separate handler)
+	// HTTP SERVER
 	go func() {
 		http.HandleFunc("/attendance", getAttendance)
+		http.HandleFunc("/health", healthCheck)
 
-		fmt.Println("🌐 API Server running on :8090")
-		http.ListenAndServe(":8090", nil)
+		fmt.Println("🌐 API Server running on", HTTP_PORT)
+		http.ListenAndServe(HTTP_PORT, nil)
 	}()
 
-	// keep main alive
 	select {}
 }
