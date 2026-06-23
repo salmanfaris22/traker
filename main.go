@@ -3,135 +3,42 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net"
+	"io"
+	"log"
 	"net/http"
-	"os"
-	"sync"
 	"time"
 )
 
-const (
-	TCP_PORT  = ":8080"
-	HTTP_PORT = ":8090"
-)
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 
-// -------- DATA STRUCTURE ----------
-type Attendance struct {
-	Data string `json:"data"`
-	Time string `json:"time"`
-}
-
-var (
-	mu       sync.Mutex
-	logStore []Attendance
-)
-
-// -------- FILE LOG ----------
-func logToFile(data string) {
-	f, err := os.OpenFile("device_logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		fmt.Println("File error:", err)
-		return
-	}
-	defer f.Close()
-
-	f.WriteString(time.Now().Format("2006-01-02 15:04:05") + " => " + data + "\n")
-}
-
-// -------- MEMORY STORE ----------
-func saveLog(data string) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	logStore = append(logStore, Attendance{
-		Data: data,
-		Time: time.Now().Format("2006-01-02 15:04:05"),
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "ok",
+		"time":   time.Now().Format(time.RFC3339),
 	})
 }
 
-// -------- TCP HANDLER ----------
-func handleConnection(conn net.Conn) {
-	defer conn.Close()
+func catchAll(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
 
-	fmt.Println("🔌 Device connected:", conn.RemoteAddr())
-
-	buffer := make([]byte, 4096)
-
-	for {
-		n, err := conn.Read(buffer)
-		if err != nil {
-			fmt.Println("❌ Connection closed:", conn.RemoteAddr())
-			return
-		}
-
-		if n > 0 {
-			rawData := string(buffer[:n])
-
-			fmt.Println("🔥 RAW DATA:")
-			fmt.Println(rawData)
-
-			saveLog(rawData)
-			logToFile(rawData)
-		}
-	}
-}
-
-// -------- API: ATTENDANCE ----------
-func getAttendance(w http.ResponseWriter, r *http.Request) {
-	mu.Lock()
-	defer mu.Unlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(logStore)
-}
-
-// -------- API: HEALTH ----------
-func healthCheck(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
+	log.Println("================================")
+	log.Println("METHOD:", r.Method)
+	log.Println("PATH:", r.URL.Path)
+	log.Println("QUERY:", r.URL.RawQuery)
+	log.Println("BODY:", string(body))
+	log.Println("================================")
 
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok","time":"%s"}`,
-		time.Now().Format("2006-01-02 15:04:05"),
-	)
+	fmt.Fprint(w, "OK")
 }
 
-// -------- MAIN ----------
 func main() {
+	// Health endpoint
+	http.HandleFunc("/health", healthHandler)
 
-	// TCP SERVER
-	go func() {
-		listener, err := net.Listen("tcp", TCP_PORT)
-		if err != nil {
-			fmt.Println("TCP start error:", err)
-			return
-		}
+	// Catch all ADMS requests
+	http.HandleFunc("/", catchAll)
 
-		fmt.Println("🚀 TCP Server running on", TCP_PORT)
-
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				fmt.Println("Accept error:", err)
-				continue
-			}
-
-			go handleConnection(conn)
-		}
-	}()
-
-	// HTTP SERVER
-	go func() {
-		http.HandleFunc("/attendance", getAttendance)
-		http.HandleFunc("/health", healthCheck)
-
-		fmt.Println("🌐 API Server running on", HTTP_PORT)
-
-		err := http.ListenAndServe(HTTP_PORT, nil)
-		if err != nil {
-			fmt.Println("HTTP server error:", err)
-		}
-	}()
-
-	// keep process alive
-	select {}
+	log.Println("Listening on :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
