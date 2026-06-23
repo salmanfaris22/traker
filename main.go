@@ -15,7 +15,7 @@ const (
 	HTTP_PORT = ":8090"
 )
 
-// -------- DATA STORE ----------
+// -------- DATA STRUCTURE ----------
 type Attendance struct {
 	Data string `json:"data"`
 	Time string `json:"time"`
@@ -26,7 +26,7 @@ var (
 	logStore []Attendance
 )
 
-// -------- LOG TO FILE ----------
+// -------- FILE LOG ----------
 func logToFile(data string) {
 	f, err := os.OpenFile("device_logs.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -38,7 +38,7 @@ func logToFile(data string) {
 	f.WriteString(time.Now().Format("2006-01-02 15:04:05") + " => " + data + "\n")
 }
 
-// -------- STORE IN MEMORY ----------
+// -------- MEMORY STORE ----------
 func saveLog(data string) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -67,7 +67,7 @@ func handleConnection(conn net.Conn) {
 		if n > 0 {
 			rawData := string(buffer[:n])
 
-			fmt.Println("🔥 RAW PACKET RECEIVED:")
+			fmt.Println("🔥 RAW DATA:")
 			fmt.Println(rawData)
 
 			saveLog(rawData)
@@ -111,8 +111,10 @@ func main() {
 		for {
 			conn, err := listener.Accept()
 			if err != nil {
+				fmt.Println("Accept error:", err)
 				continue
 			}
+
 			go handleConnection(conn)
 		}
 	}()
@@ -123,8 +125,13 @@ func main() {
 		http.HandleFunc("/health", healthCheck)
 
 		fmt.Println("🌐 API Server running on", HTTP_PORT)
-		http.ListenAndServe(HTTP_PORT, nil)
+
+		err := http.ListenAndServe(HTTP_PORT, nil)
+		if err != nil {
+			fmt.Println("HTTP server error:", err)
+		}
 	}()
 
+	// keep process alive
 	select {}
 }
